@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  # Redis for job queue (BullMQ) and caching
+  redis:
+    image: redis:7-alpine
+    container_name: storyforge-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Note: PostgreSQL and MinIO removed - using Google Cloud Firestore and Cloud Storage instead
+  # To run this project, you need:
+  # 1. A Google Cloud project with Firestore and Cloud Storage enabled
+  # 2. A service account key with access to both services
+  # 3. Set GOOGLE_CLOUD_PROJECT and GOOGLE_APPLICATION_CREDENTIALS environment variables
+
+volumes:
+  redis_data:

@@ -1,0 +1,18 @@
+{
+  "name": "StoryForge Web Dev Container",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:0-20",
+  "forwardPorts": [3000],
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  "postCreateCommand": "cd apps/web && corepack enable && corepack prepare pnpm@8.8.0 --activate && pnpm install",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  },
+  "remoteUser": "vscode"
+}
