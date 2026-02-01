@@ -7,6 +7,16 @@
     <link rel="stylesheet" href="styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+    
+    <!-- API Configuration (gitignored) -->
+    <script src="api-config.js"></script>
+    <script src="firebase-config.js"></script>
 </head>
 <body>
     <!-- Login Page -->
@@ -99,8 +109,36 @@
                     </button>
                 </form>
                 
+                <!-- Forgot Password Form -->
+                <form id="forgotPasswordForm" class="login-form hidden">
+                    <div class="auth-error hidden" id="forgotError">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <span></span>
+                    </div>
+                    
+                    <div class="auth-success hidden" id="forgotSuccess">
+                        <i class="fas fa-check-circle"></i>
+                        <span></span>
+                    </div>
+                    
+                    <p style="text-align: center; margin-bottom: 20px; color: var(--text-light);">
+                        Enter your email address and we'll send you a link to reset your password.
+                    </p>
+                    
+                    <div class="input-group">
+                        <i class="fas fa-envelope"></i>
+                        <input type="email" id="forgotEmail" placeholder="Email address" required autocomplete="email">
+                    </div>
+                    
+                    <button type="submit" class="login-btn">
+                        <span>Send Reset Link</span>
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </form>
+                
                 <div class="login-footer">
                     <p id="authToggleText">New to Storify? <a href="#" id="signupLink">Create an account</a></p>
+                    <p id="forgotPasswordText" class="forgot-password-link"><a href="#" id="forgotPasswordLink">Forgot your password?</a></p>
                 </div>
             </div>
         </div>
@@ -335,6 +373,31 @@
                 <div id="draftsList" class="drafts-list">
                     <!-- Drafts will be loaded here dynamically -->
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Fullscreen Meditation Viewer -->
+    <div id="meditationViewer" class="meditation-viewer hidden">
+        <div class="meditation-backdrop"></div>
+        <div class="meditation-image-container">
+            <img id="meditationImage" class="meditation-image" src="" alt="Memory">
+            <img id="meditationImageNext" class="meditation-image meditation-image-next" src="" alt="Next Memory">
+        </div>
+        <div class="meditation-overlay">
+            <div class="meditation-text-container">
+                <p id="meditationText" class="meditation-text"></p>
+            </div>
+            <div class="meditation-progress">
+                <div id="meditationProgressBar" class="meditation-progress-bar"></div>
+            </div>
+            <div class="meditation-controls">
+                <button id="meditationClose" class="meditation-close-btn">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="meditation-moment-indicator">
+                <span id="currentMomentNum">1</span> / <span id="totalMomentsNum">1</span>
             </div>
         </div>
     </div>

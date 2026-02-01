@@ -24,6 +24,14 @@ const signupConfirmPassword = document.getElementById('signupConfirmPassword');
 const reqLength = document.getElementById('reqLength');
 const reqMatch = document.getElementById('reqMatch');
 
+// Forgot Password DOM Elements
+const forgotPasswordForm = document.getElementById('forgotPasswordForm');
+const forgotPasswordLink = document.getElementById('forgotPasswordLink');
+const forgotPasswordText = document.getElementById('forgotPasswordText');
+const forgotEmail = document.getElementById('forgotEmail');
+const forgotError = document.getElementById('forgotError');
+const forgotSuccess = document.getElementById('forgotSuccess');
+
 const uploadModal = document.getElementById('uploadModal');
 const storyDetailModal = document.getElementById('storyDetailModal');
 const addStoryBtn = document.getElementById('addStoryBtn');
@@ -66,10 +74,10 @@ const saveAsDraft = document.getElementById('saveAsDraft');
 const startNewStory = document.getElementById('startNewStory');
 const draftsList = document.getElementById('draftsList');
 
-// ElevenLabs Configuration
-// Rachel voice - extremely expressive, warm, emotional storytelling
-const ELEVENLABS_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel - most human-like expressive voice
-const ELEVENLABS_API_KEY = 'sk_2573fc4a7dbbf73baec6ce2c631e2c93efc58b1e1d94bb62';
+// API Configuration - loaded from api-config.js (gitignored)
+const ELEVENLABS_VOICE_ID = API_CONFIG?.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
+const ELEVENLABS_API_KEY = API_CONFIG?.ELEVENLABS_API_KEY || '';
+const OPENAI_API_KEY = API_CONFIG?.OPENAI_API_KEY || '';
 
 // App State
 let currentUser = null;
@@ -79,11 +87,12 @@ let currentStoryIndex = null;
 let selectedImage = null;
 let narrationStartChapter = 0; // Which chapter to start narration from
 let selectedFilename = null;
-let elevenLabsApiKey = ELEVENLABS_API_KEY; // Use the hardcoded key
+let elevenLabsApiKey = ELEVENLABS_API_KEY;
 let currentAudio = null;
 let isNarrationPaused = false;
 let currentTheme = localStorage.getItem('storifyTheme') || 'mountain';
 let isSignupMode = false; // Track auth mode
+let isForgotMode = false; // Track forgot password mode
 
 // Theme configurations based on image colors
 const themes = {
@@ -308,57 +317,314 @@ function generateAIStory(note) {
     return template.replace('{note}', note.toLowerCase());
 }
 
-// Initialize App
-function init() {
-    // Check for saved user FIRST - before showing any UI
-    const savedUser = localStorage.getItem('storifyUser');
-    
-    if (savedUser) {
-        // Check if user exists in the auth system
-        // If not (old user from before auth system), migrate them
-        if (!userExists(savedUser)) {
-            // Create a default account for existing users
-            const users = getUsers();
-            users[savedUser.toLowerCase()] = {
-                username: savedUser,
-                email: `${savedUser.toLowerCase()}@storify.local`,
-                password: simpleHash('legacy'),
-                createdAt: new Date().toISOString(),
-                migrated: true
-            };
-            saveUsers(users);
-            console.log('Migrated legacy user:', savedUser);
-        }
-        
-        // Returning user - skip login, go straight to their stories
-        currentUser = savedUser;
-        
-        // Hide login immediately, show story page
-        loginPage.classList.add('hidden');
-        storyPage.classList.remove('hidden');
-        welcomeUser.textContent = `Welcome back, ${currentUser}`;
-        
-        // Load their saved stories and title
-        loadStories();
-        renderStories();
-        
-        // Show narration panel if they have stories
-        if (stories.length > 0) {
-            updateNarrationPanel();
-            narrationPanel.classList.remove('hidden');
-        } else {
-            narrationPanel.classList.add('hidden');
-        }
-        
-        console.log('Returning user:', currentUser, 'Stories loaded:', stories.length);
-    } else {
-        // New user - show login page
-        loginPage.classList.remove('hidden');
-        storyPage.classList.add('hidden');
-        narrationPanel.classList.add('hidden');
+// Generate therapeutic memory description using OpenAI
+async function generateOpenAINarration(note, imageBase64 = null) {
+    if (!OPENAI_API_KEY || OPENAI_API_KEY === 'YOUR_OPENAI_API_KEY') {
+        console.log('OpenAI API key not configured, using local generation');
+        return generateAIStory(note);
     }
     
+    const systemPrompt = `You are a gentle, warm, and deeply empathetic memory therapist and meditation guide. Your role is to help people relive their cherished memories in a calming, therapeutic way.
+
+When given a memory note and optionally an image, create a beautiful, meditative narration that:
+- Speaks directly to the listener in second person ("you")
+- Uses a slow, peaceful, and soothing tone perfect for meditation
+- Helps the person emotionally reconnect with the moment
+- Incorporates sensory details (what they might have seen, heard, felt, smelled)
+- Validates their emotions and the importance of this memory
+- Includes gentle pauses (use "..." for natural breathing moments)
+- Feels like a warm, healing journey back to that moment
+- Is about 3-5 sentences, perfect for audio narration
+- Ends with a grounding, peaceful reflection
+
+Your narration will be read aloud as a meditation, so write it to be spoken naturally and soothingly.`;
+
+    const userMessage = `Here is a precious memory that someone wants to revisit:
+
+"${note}"
+
+Please create a therapeutic, meditation-like narration that will help them relive this beautiful moment. Make it calming, warm, and emotionally resonant.`;
+
+    try {
+        const messages = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage }
+        ];
+
+        // If we have an image, use GPT-4 Vision
+        let model = 'gpt-4o';
+        let requestBody = {
+            model: model,
+            messages: messages,
+            max_tokens: 300,
+            temperature: 0.8
+        };
+
+        // If image is provided, include it in the request
+        if (imageBase64 && imageBase64.startsWith('data:image')) {
+            requestBody.messages = [
+                { role: 'system', content: systemPrompt },
+                { 
+                    role: 'user', 
+                    content: [
+                        { type: 'text', text: userMessage },
+                        { 
+                            type: 'image_url', 
+                            image_url: { 
+                                url: imageBase64,
+                                detail: 'low' 
+                            } 
+                        }
+                    ]
+                }
+            ];
+        }
+
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('OpenAI API error:', response.status, errorData);
+            throw new Error(errorData.error?.message || 'OpenAI API error');
+        }
+
+        const data = await response.json();
+        const narration = data.choices[0]?.message?.content?.trim();
+        
+        if (narration) {
+            console.log('OpenAI narration generated successfully');
+            return narration;
+        }
+        
+        throw new Error('No narration generated');
+    } catch (error) {
+        console.error('Error generating OpenAI narration:', error);
+        // Fallback to local generation
+        return generateAIStory(note);
+    }
+}
+
+// Generate a unified meditation script for ALL moments at once
+// Returns structured data with segments for each moment
+async function generateUnifiedMeditationScript(storiesToNarrate, storyTitle) {
+    if (!OPENAI_API_KEY || OPENAI_API_KEY === 'YOUR_OPENAI_API_KEY') {
+        console.log('OpenAI API key not configured');
+        return null;
+    }
+
+    const systemPrompt = `You are a deeply empathetic meditation guide and memory therapist. You will receive a series of precious moments from someone's life, each with a photo and a personal note.
+
+Your task is to create ONE continuous, flowing meditation script that guides the listener through ALL their memories as a single beautiful journey. This is not separate descriptions - it's one unified narrative that weaves through each moment.
+
+CRITICAL INSTRUCTIONS:
+1. ANALYZE EACH IMAGE CAREFULLY - Describe specific visual details you can see (people, places, expressions, colors, lighting, objects, scenery, weather, time of day)
+2. Be EXTREMELY personal and detailed - mention specific things visible in each photo
+3. Create smooth, poetic transitions between moments
+4. Use second person ("you") to speak directly to the listener
+5. Include sensory details (sight, sound, smell, touch, feeling)
+6. Pace it like a calming meditation with natural pauses
+7. Each moment should be 4-6 sentences of rich, detailed narration
+8. The entire script should flow as one continuous piece
+
+FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+[MOMENT 1]
+(Your detailed, personal narration for the first moment, describing what you see in the image and weaving in their note)
+
+[MOMENT 2]
+(Smooth transition, then detailed narration for moment 2)
+
+[MOMENT 3]
+(Continue the pattern...)
+
+[CLOSING]
+(A beautiful, grounding conclusion that ties all memories together)
+
+Remember: Actually LOOK at each image and describe what you see. Be specific about faces, places, objects, lighting, and atmosphere. Make each person feel like you truly see their memory.`;
+
+    // Build content array with all images and notes
+    const contentArray = [
+        { 
+            type: 'text', 
+            text: `Story Title: "${storyTitle || 'My Precious Memories'}"\n\nI'm sharing ${storiesToNarrate.length} precious moments from my life. Please create a unified meditation script that flows through all of them:\n\n`
+        }
+    ];
+
+    storiesToNarrate.forEach((story, index) => {
+        contentArray.push({
+            type: 'text',
+            text: `\n--- MOMENT ${index + 1} ---\nMy note: "${story.note}"\nPhoto:`
+        });
+        
+        // Add the image if it's base64
+        if (story.image && story.image.startsWith('data:image')) {
+            contentArray.push({
+                type: 'image_url',
+                image_url: {
+                    url: story.image,
+                    detail: 'high' // Use high detail for better image analysis
+                }
+            });
+        }
+    });
+
+    contentArray.push({
+        type: 'text',
+        text: '\n\nNow create one beautiful, flowing meditation script that takes me through all these moments. Remember to describe specific visual details from each photo and make smooth transitions between them.'
+    });
+
+    try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: contentArray }
+                ],
+                max_tokens: 2000,
+                temperature: 0.85
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('OpenAI API error:', response.status, errorData);
+            throw new Error(errorData.error?.message || 'OpenAI API error');
+        }
+
+        const data = await response.json();
+        const fullScript = data.choices[0]?.message?.content?.trim();
+        
+        if (!fullScript) {
+            throw new Error('No script generated');
+        }
+
+        console.log('Unified meditation script generated:', fullScript);
+
+        // Parse the script into segments
+        const segments = parseMeditationScript(fullScript, storiesToNarrate.length);
+        return segments;
+
+    } catch (error) {
+        console.error('Error generating unified meditation:', error);
+        return null;
+    }
+}
+
+// Parse the meditation script into segments with moment markers
+function parseMeditationScript(script, numMoments) {
+    const segments = [];
+    
+    // Split by [MOMENT X] markers
+    const parts = script.split(/\[MOMENT\s*\d+\]/i);
+    
+    // First part might be empty or intro text
+    let closingText = '';
+    
+    for (let i = 1; i <= numMoments; i++) {
+        const partIndex = i;
+        let text = parts[partIndex] || '';
+        
+        // Check if this part contains [CLOSING]
+        if (text.includes('[CLOSING]')) {
+            const closingSplit = text.split(/\[CLOSING\]/i);
+            text = closingSplit[0].trim();
+            closingText = closingSplit[1]?.trim() || '';
+        }
+        
+        text = text.trim();
+        
+        if (text) {
+            segments.push({
+                momentIndex: i - 1,
+                text: text,
+                type: 'moment'
+            });
+        }
+    }
+    
+    // Extract closing if not already found
+    if (!closingText) {
+        const closingMatch = script.match(/\[CLOSING\]([\s\S]*?)$/i);
+        if (closingMatch) {
+            closingText = closingMatch[1].trim();
+        }
+    }
+    
+    if (closingText) {
+        segments.push({
+            momentIndex: -1,
+            text: closingText,
+            type: 'closing'
+        });
+    }
+    
+    return segments;
+}
+
+// Meditation viewer state
+let meditationAudio = null;
+let meditationSegments = [];
+let currentMeditationSegment = 0;
+let meditationTrackingInterval = null;
+
+// Initialize App
+async function init() {
+    // Set up event listeners first
     setupEventListeners();
+    
+    // Listen for Firebase Auth state changes
+    onAuthStateChange(async (user) => {
+        if (user) {
+            // User is signed in with Firebase Auth
+            currentUser = user.displayName || user.email;
+            localStorage.setItem('storifyUser', currentUser);
+            
+            // Hide login, show story page
+            loginPage.classList.add('hidden');
+            storyPage.classList.remove('hidden');
+            welcomeUser.textContent = `Welcome back, ${currentUser}`;
+            
+            // Load their saved stories and title
+            await loadStories();
+            renderStories();
+            
+            // Show narration panel if they have stories
+            if (stories.length > 0) {
+                updateNarrationPanel();
+                narrationPanel.classList.remove('hidden');
+            } else {
+                narrationPanel.classList.add('hidden');
+            }
+            
+            console.log('Firebase Auth user:', currentUser, 'Stories loaded:', stories.length);
+        } else {
+            // No Firebase user - check for legacy localStorage user
+            const savedUser = localStorage.getItem('storifyUser');
+            
+            if (savedUser) {
+                // Legacy user exists - prompt them to re-login with Firebase
+                console.log('Legacy user found, please sign in again with Firebase Auth');
+                localStorage.removeItem('storifyUser'); // Clear legacy session
+            }
+            
+            // Show login page
+            loginPage.classList.remove('hidden');
+            storyPage.classList.add('hidden');
+            narrationPanel.classList.add('hidden');
+        }
+    });
 }
 
 // Check if user is logged in (called after login)
@@ -438,9 +704,23 @@ function setupEventListeners() {
     signupLink.addEventListener('click', toggleAuthMode);
     signupForm.addEventListener('submit', handleSignup);
     
+    // Forgot password listeners
+    if (forgotPasswordLink) {
+        forgotPasswordLink.addEventListener('click', toggleForgotPasswordMode);
+    }
+    if (forgotPasswordForm) {
+        forgotPasswordForm.addEventListener('submit', handleForgotPassword);
+    }
+    
     // Password validation listeners
     signupPassword.addEventListener('input', validatePasswordRequirements);
     signupConfirmPassword.addEventListener('input', validatePasswordRequirements);
+    
+    // Meditation viewer close button
+    const meditationClose = document.getElementById('meditationClose');
+    if (meditationClose) {
+        meditationClose.addEventListener('click', closeMeditationViewer);
+    }
 }
 
 // ===== AUTHENTICATION SYSTEM =====
@@ -467,19 +747,59 @@ function saveUsers(users) {
     localStorage.setItem('storifyUsers', JSON.stringify(users));
 }
 
-// Check if username exists
+// Check if user exists (now async for Firestore)
+async function userExistsAsync(username) {
+    // First check Firestore
+    const firestoreExists = await userExistsInFirestore(username);
+    if (firestoreExists) return true;
+    
+    // Fallback to localStorage for backwards compatibility
+    const users = getUsers();
+    return users.hasOwnProperty(username.toLowerCase());
+}
+
+// Check if user exists (sync version for backwards compatibility)
 function userExists(username) {
     const users = getUsers();
     return users.hasOwnProperty(username.toLowerCase());
 }
 
-// Check if email exists
+// Check if email exists (now async for Firestore)
+async function emailExistsAsync(email) {
+    // First check Firestore
+    const firestoreExists = await emailExistsInFirestore(email);
+    if (firestoreExists) return true;
+    
+    // Fallback to localStorage
+    const users = getUsers();
+    return Object.values(users).some(user => user.email.toLowerCase() === email.toLowerCase());
+}
+
+// Check if email exists (sync version)
 function emailExists(email) {
     const users = getUsers();
     return Object.values(users).some(user => user.email.toLowerCase() === email.toLowerCase());
 }
 
-// Register new user
+// Register new user (now saves to Firestore)
+async function registerUserAsync(username, email, password) {
+    const userData = {
+        username: username,
+        email: email.toLowerCase(),
+        password: simpleHash(password),
+        createdAt: new Date().toISOString()
+    };
+    
+    // Save to Firestore
+    await saveUserToFirestore(userData);
+    
+    // Also save to localStorage for offline support
+    const users = getUsers();
+    users[username.toLowerCase()] = userData;
+    saveUsers(users);
+}
+
+// Register new user (sync version for backwards compatibility)
 function registerUser(username, email, password) {
     const users = getUsers();
     users[username.toLowerCase()] = {
@@ -491,7 +811,22 @@ function registerUser(username, email, password) {
     saveUsers(users);
 }
 
-// Validate user credentials
+// Validate user credentials (now async for Firestore)
+async function validateCredentialsAsync(username, password) {
+    // Try Firestore first
+    const firestoreUser = await getUserFromFirestore(username);
+    if (firestoreUser) {
+        return firestoreUser.password === simpleHash(password);
+    }
+    
+    // Fallback to localStorage
+    const users = getUsers();
+    const user = users[username.toLowerCase()];
+    if (!user) return false;
+    return user.password === simpleHash(password);
+}
+
+// Validate user credentials (sync version)
 function validateCredentials(username, password) {
     const users = getUsers();
     const user = users[username.toLowerCase()];
@@ -503,28 +838,140 @@ function validateCredentials(username, password) {
 function toggleAuthMode(e) {
     e.preventDefault();
     isSignupMode = !isSignupMode;
+    isForgotMode = false;
     
     // Hide all errors/success messages
     loginError.classList.add('hidden');
     signupError.classList.add('hidden');
     signupSuccess.classList.add('hidden');
+    if (forgotError) forgotError.classList.add('hidden');
+    if (forgotSuccess) forgotSuccess.classList.add('hidden');
     
     if (isSignupMode) {
         // Show signup form
         loginForm.classList.add('hidden');
+        forgotPasswordForm.classList.add('hidden');
         signupForm.classList.remove('hidden');
         authSubtitle.textContent = 'Create your account';
         authToggleText.innerHTML = 'Already have an account? <a href="#" id="signupLink">Sign in</a>';
+        forgotPasswordText.classList.add('hidden');
     } else {
         // Show login form
         signupForm.classList.add('hidden');
+        forgotPasswordForm.classList.add('hidden');
         loginForm.classList.remove('hidden');
         authSubtitle.textContent = 'Where every picture tells a story';
         authToggleText.innerHTML = 'New to Storify? <a href="#" id="signupLink">Create an account</a>';
+        forgotPasswordText.classList.remove('hidden');
     }
     
     // Re-attach the click listener to the new link
     document.getElementById('signupLink').addEventListener('click', toggleAuthMode);
+}
+
+// Toggle to forgot password mode
+function toggleForgotPasswordMode(e) {
+    e.preventDefault();
+    isForgotMode = true;
+    isSignupMode = false;
+    
+    // Hide all errors/success messages
+    loginError.classList.add('hidden');
+    signupError.classList.add('hidden');
+    signupSuccess.classList.add('hidden');
+    if (forgotError) forgotError.classList.add('hidden');
+    if (forgotSuccess) forgotSuccess.classList.add('hidden');
+    
+    // Show forgot password form
+    loginForm.classList.add('hidden');
+    signupForm.classList.add('hidden');
+    forgotPasswordForm.classList.remove('hidden');
+    authSubtitle.textContent = 'Reset your password';
+    authToggleText.innerHTML = 'Remember your password? <a href="#" id="signupLink">Sign in</a>';
+    forgotPasswordText.classList.add('hidden');
+    
+    // Re-attach the click listener
+    document.getElementById('signupLink').addEventListener('click', toggleAuthMode);
+}
+
+// Handle Forgot Password
+async function handleForgotPassword(e) {
+    e.preventDefault();
+    
+    const email = forgotEmail.value.trim();
+    
+    if (forgotError) forgotError.classList.add('hidden');
+    if (forgotSuccess) forgotSuccess.classList.add('hidden');
+    
+    if (!email) {
+        showForgotError('Please enter your email address');
+        return;
+    }
+    
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        showForgotError('Please enter a valid email address');
+        return;
+    }
+    
+    // Show loading state
+    const forgotBtn = forgotPasswordForm.querySelector('.login-btn');
+    const originalText = forgotBtn.innerHTML;
+    forgotBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+    forgotBtn.disabled = true;
+    
+    try {
+        const result = await sendPasswordReset(email);
+        
+        if (result.success) {
+            showForgotSuccess('Password reset email sent! Check your inbox.');
+            forgotEmail.value = '';
+            
+            // Auto switch to login after 3 seconds
+            setTimeout(() => {
+                isForgotMode = false;
+                forgotPasswordForm.classList.add('hidden');
+                loginForm.classList.remove('hidden');
+                authSubtitle.textContent = 'Where every picture tells a story';
+                authToggleText.innerHTML = 'New to Storify? <a href="#" id="signupLink">Create an account</a>';
+                forgotPasswordText.classList.remove('hidden');
+                document.getElementById('signupLink').addEventListener('click', toggleAuthMode);
+                if (forgotSuccess) forgotSuccess.classList.add('hidden');
+            }, 3000);
+        } else {
+            let errorMessage = result.error;
+            if (result.code === 'auth/user-not-found') {
+                errorMessage = 'No account found with this email address.';
+            } else if (result.code === 'auth/invalid-email') {
+                errorMessage = 'Invalid email address.';
+            }
+            showForgotError(errorMessage);
+        }
+    } catch (error) {
+        console.error('Forgot password error:', error);
+        showForgotError('An error occurred. Please try again.');
+    } finally {
+        forgotBtn.innerHTML = originalText;
+        forgotBtn.disabled = false;
+    }
+}
+
+// Show forgot password error
+function showForgotError(message) {
+    if (forgotError) {
+        forgotError.querySelector('span').textContent = message;
+        forgotError.classList.remove('hidden');
+        shakeElement(forgotPasswordForm);
+    }
+}
+
+// Show forgot password success
+function showForgotSuccess(message) {
+    if (forgotSuccess) {
+        forgotSuccess.querySelector('span').textContent = message;
+        forgotSuccess.classList.remove('hidden');
+    }
 }
 
 // Show login error
@@ -570,38 +1017,70 @@ function validatePasswordRequirements() {
 }
 
 // Handle Login
-function handleLogin(e) {
+async function handleLogin(e) {
     e.preventDefault();
-    const username = usernameInput.value.trim();
+    const usernameOrEmail = usernameInput.value.trim();
     const password = passwordInput.value;
     
     loginError.classList.add('hidden');
 
-    if (!username || !password) {
+    if (!usernameOrEmail || !password) {
         showLoginError('Please fill in all fields');
         return;
     }
     
-    // Check if user exists
-    if (!userExists(username)) {
-        showLoginError('Account not found. Please sign up first.');
-        return;
-    }
+    // Show loading state
+    const loginBtn = loginForm.querySelector('.login-btn');
+    const originalText = loginBtn.innerHTML;
+    loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing in...';
+    loginBtn.disabled = true;
     
-    // Validate credentials
-    if (!validateCredentials(username, password)) {
-        showLoginError('Incorrect password. Please try again.');
-        return;
+    try {
+        let result;
+        
+        // Check if input is email or username
+        if (usernameOrEmail.includes('@')) {
+            // Sign in with email
+            result = await signInWithEmail(usernameOrEmail, password);
+        } else {
+            // Sign in with username (looks up email first)
+            result = await signInWithUsername(usernameOrEmail, password);
+        }
+        
+        if (!result.success) {
+            // Handle specific Firebase Auth errors
+            let errorMessage = result.error;
+            if (result.code === 'auth/user-not-found') {
+                errorMessage = 'Account not found. Please sign up first.';
+            } else if (result.code === 'auth/wrong-password') {
+                errorMessage = 'Incorrect password. Please try again.';
+            } else if (result.code === 'auth/invalid-email') {
+                errorMessage = 'Invalid email address.';
+            } else if (result.code === 'auth/too-many-requests') {
+                errorMessage = 'Too many failed attempts. Please try again later.';
+            }
+            showLoginError(errorMessage);
+            loginBtn.innerHTML = originalText;
+            loginBtn.disabled = false;
+            return;
+        }
+        
+        // Success - login user
+        const user = result.user;
+        currentUser = user.displayName || usernameOrEmail;
+        localStorage.setItem('storifyUser', currentUser);
+        await showStoryPage();
+    } catch (error) {
+        console.error('Login error:', error);
+        showLoginError('An error occurred. Please try again.');
+    } finally {
+        loginBtn.innerHTML = originalText;
+        loginBtn.disabled = false;
     }
-    
-    // Success - login user
-    currentUser = username;
-    localStorage.setItem('storifyUser', username);
-    showStoryPage();
 }
 
 // Handle Signup
-function handleSignup(e) {
+async function handleSignup(e) {
     e.preventDefault();
     
     const username = signupUsername.value.trim();
@@ -623,22 +1102,10 @@ function handleSignup(e) {
         return;
     }
     
-    // Check if username exists
-    if (userExists(username)) {
-        showSignupError('Username already taken. Please choose another.');
-        return;
-    }
-    
     // Validate email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
         showSignupError('Please enter a valid email address');
-        return;
-    }
-    
-    // Check if email exists
-    if (emailExists(email)) {
-        showSignupError('Email already registered. Please sign in.');
         return;
     }
     
@@ -654,39 +1121,87 @@ function handleSignup(e) {
         return;
     }
     
-    // Register the user
-    registerUser(username, email, password);
+    // Show loading state
+    const signupBtn = signupForm.querySelector('.signup-btn');
+    const originalText = signupBtn.innerHTML;
+    signupBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating account...';
+    signupBtn.disabled = true;
     
-    // Show success and switch to login
-    showSignupSuccess('Account created successfully! Redirecting to login...');
-    
-    // Clear form
-    signupUsername.value = '';
-    signupEmail.value = '';
-    signupPassword.value = '';
-    signupConfirmPassword.value = '';
-    reqLength.classList.remove('valid');
-    reqMatch.classList.remove('valid');
-    
-    // Auto switch to login after 2 seconds
-    setTimeout(() => {
-        isSignupMode = false;
-        signupForm.classList.add('hidden');
-        loginForm.classList.remove('hidden');
-        authSubtitle.textContent = 'Where every picture tells a story';
-        authToggleText.innerHTML = 'New to Storify? <a href="#" id="signupLink">Create an account</a>';
-        document.getElementById('signupLink').addEventListener('click', toggleAuthMode);
+    try {
+        // Check if username is available
+        const usernameAvailable = await isUsernameAvailable(username);
+        if (!usernameAvailable) {
+            showSignupError('Username already taken. Please choose another.');
+            signupBtn.innerHTML = originalText;
+            signupBtn.disabled = false;
+            return;
+        }
         
-        // Pre-fill username
-        usernameInput.value = username;
-        passwordInput.focus();
+        // Create user with Firebase Auth
+        const result = await createUserWithEmail(email, password, username);
         
-        signupSuccess.classList.add('hidden');
-    }, 2000);
+        if (!result.success) {
+            // Handle specific Firebase Auth errors
+            let errorMessage = result.error;
+            if (result.code === 'auth/email-already-in-use') {
+                errorMessage = 'Email already registered. Please sign in.';
+            } else if (result.code === 'auth/invalid-email') {
+                errorMessage = 'Invalid email address.';
+            } else if (result.code === 'auth/weak-password') {
+                errorMessage = 'Password is too weak. Please use a stronger password.';
+            }
+            showSignupError(errorMessage);
+            signupBtn.innerHTML = originalText;
+            signupBtn.disabled = false;
+            return;
+        }
+        
+        // Show success and switch to login
+        showSignupSuccess('Account created successfully! Redirecting to login...');
+        
+        // Sign out the user so they can login fresh
+        await signOutUser();
+        
+        // Clear form
+        signupUsername.value = '';
+        signupEmail.value = '';
+        signupPassword.value = '';
+        signupConfirmPassword.value = '';
+        reqLength.classList.remove('valid');
+        reqMatch.classList.remove('valid');
+        
+        // Auto switch to login after 2 seconds
+        setTimeout(() => {
+            isSignupMode = false;
+            isForgotMode = false;
+            signupForm.classList.add('hidden');
+            forgotPasswordForm.classList.add('hidden');
+            loginForm.classList.remove('hidden');
+            authSubtitle.textContent = 'Where every picture tells a story';
+            authToggleText.innerHTML = 'New to Storify? <a href="#" id="signupLink">Create an account</a>';
+            forgotPasswordText.classList.remove('hidden');
+            document.getElementById('signupLink').addEventListener('click', toggleAuthMode);
+            
+            // Pre-fill email for convenience
+            usernameInput.value = email;
+            passwordInput.focus();
+            
+            signupSuccess.classList.add('hidden');
+        }, 2000);
+    } catch (error) {
+        console.error('Signup error:', error);
+        showSignupError('An error occurred. Please try again.');
+    } finally {
+        signupBtn.innerHTML = originalText;
+        signupBtn.disabled = false;
+    }
 }
 
 // Handle Logout
-function handleLogout() {
+async function handleLogout() {
+    // Sign out from Firebase Auth
+    await signOutUser();
+    
     currentUser = null;
     stories = []; // Clear stories array on logout
     localStorage.removeItem('storifyUser');
@@ -700,19 +1215,22 @@ function handleLogout() {
     
     // Reset to login mode
     isSignupMode = false;
+    isForgotMode = false;
     signupForm.classList.add('hidden');
+    forgotPasswordForm.classList.add('hidden');
     loginForm.classList.remove('hidden');
     authSubtitle.textContent = 'Where every picture tells a story';
+    forgotPasswordText.classList.remove('hidden');
 }
 
 // Show Story Page (called after login)
-function showStoryPage() {
+async function showStoryPage() {
     loginPage.classList.add('hidden');
     storyPage.classList.remove('hidden');
     welcomeUser.textContent = `Welcome, ${currentUser}`;
     
-    // Load user-specific stories
-    loadStories();
+    // Load user-specific stories (now async)
+    await loadStories();
     renderStories();
     
     console.log('User logged in:', currentUser, 'Stories:', stories.length);
@@ -1091,14 +1609,26 @@ function showThemeNotification(themeName) {
 }
 
 // Story management
-function saveNewStory() {
+async function saveNewStory() {
     if (!selectedImage) {
         alert('Please select an image first!');
         return;
     }
 
     const note = imageNote.value.trim() || 'A beautiful moment captured in time...';
-    const aiStory = generateAIStory(note);
+    
+    // Show loading state
+    saveStory.disabled = true;
+    saveStory.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating your memory...';
+    
+    // Generate AI narration using OpenAI (with image if available)
+    let aiStory;
+    try {
+        aiStory = await generateOpenAINarration(note, selectedImage);
+    } catch (error) {
+        console.error('Error generating AI narration:', error);
+        aiStory = generateAIStory(note); // Fallback to local generation
+    }
 
     const newStory = {
         id: Date.now(),
@@ -1112,28 +1642,52 @@ function saveNewStory() {
     stories.push(newStory);
     saveStories();
     renderStories();
+    
+    // Reset button state
+    saveStory.disabled = false;
+    saveStory.innerHTML = '<i class="fas fa-feather-alt"></i> Add to Story';
+    
     closeUploadModalHandler();
     updateNarrationPanel();
     
     // Analyze images and update theme
     analyzeImagesAndSetTheme();
+    
+    // Show success notification
+    showNotification('fa-sparkles', 'Memory added with AI meditation!', '#4A7C6F');
 }
 
 function saveStories() {
     if (!currentUser) return;
+    
+    // Save to Firestore (async, non-blocking) - this handles Cloud Storage for images
+    saveStoriesToFirestore(currentUser, stories).then(() => {
+        console.log('Stories synced to Firestore');
+    }).catch(err => {
+        console.error('Error syncing stories to Firestore:', err);
+    });
+    
+    // Only save to localStorage if images are already URLs (not base64)
+    // This prevents localStorage quota issues
+    const storiesForLocalStorage = stories.map(story => {
+        // If image is a Cloud Storage URL, keep it; if base64, skip it for localStorage
+        if (story.image && story.image.startsWith('data:')) {
+            return { ...story, image: '[stored in cloud]' }; // Placeholder for localStorage
+        }
+        return story;
+    });
+    
     const key = 'storifyStories_' + currentUser;
     try {
-        localStorage.setItem(key, JSON.stringify(stories));
+        localStorage.setItem(key, JSON.stringify(storiesForLocalStorage));
     } catch (e) {
-        console.error('Error saving stories:', e);
-        // If storage is full, try to alert user
-        if (e.name === 'QuotaExceededError') {
-            alert('Storage is full! Try deleting some photos.');
-        }
+        console.warn('LocalStorage full, using Firestore only:', e.message);
+        // Clear old localStorage data to free space
+        localStorage.removeItem(key);
     }
 }
 
-function loadStories() {
+async function loadStories() {
     if (!currentUser) {
         stories = [];
         drafts = [];
@@ -1144,29 +1698,73 @@ function loadStories() {
     // Clear stories array first to prevent stacking
     stories = [];
     
-    const key = 'storifyStories_' + currentUser;
-    const savedStories = localStorage.getItem(key);
-    console.log('Loading stories for:', currentUser, 'Key:', key, 'Found:', savedStories ? 'yes' : 'no');
-    
-    if (savedStories) {
-        try {
-            stories = JSON.parse(savedStories);
-            console.log('Loaded', stories.length, 'stories');
-        } catch (e) {
-            console.error('Error loading stories:', e);
-            stories = [];
+    // Try to load from Firestore first
+    try {
+        const firestoreStories = await loadStoriesFromFirestore(currentUser);
+        if (firestoreStories && firestoreStories.length > 0) {
+            stories = firestoreStories;
+            console.log('Loaded', stories.length, 'stories from Firestore');
+        } else {
+            // Fallback to localStorage
+            const key = 'storifyStories_' + currentUser;
+            const savedStories = localStorage.getItem(key);
+            console.log('Loading stories for:', currentUser, 'Key:', key, 'Found:', savedStories ? 'yes' : 'no');
+            
+            if (savedStories) {
+                try {
+                    stories = JSON.parse(savedStories);
+                    console.log('Loaded', stories.length, 'stories from localStorage');
+                    
+                    // Sync to Firestore if we found local stories
+                    if (stories.length > 0) {
+                        await saveStoriesToFirestore(currentUser, stories);
+                        console.log('Synced local stories to Firestore');
+                    }
+                } catch (e) {
+                    console.error('Error loading stories:', e);
+                    stories = [];
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error loading from Firestore, using localStorage:', error);
+        // Fallback to localStorage
+        const key = 'storifyStories_' + currentUser;
+        const savedStories = localStorage.getItem(key);
+        if (savedStories) {
+            try {
+                stories = JSON.parse(savedStories);
+            } catch (e) {
+                stories = [];
+            }
         }
     }
     
     // Load drafts
-    loadDrafts();
+    await loadDrafts();
     
-    const titleKey = 'storifyTitle_' + currentUser;
-    const savedTitle = localStorage.getItem(titleKey);
-    if (savedTitle) {
-        storyTitle.value = savedTitle;
-    } else {
-        storyTitle.value = '';
+    // Load title from Firestore
+    try {
+        const firestoreTitle = await loadStoryTitleFromFirestore(currentUser);
+        if (firestoreTitle) {
+            storyTitle.value = firestoreTitle;
+        } else {
+            const titleKey = 'storifyTitle_' + currentUser;
+            const savedTitle = localStorage.getItem(titleKey);
+            if (savedTitle) {
+                storyTitle.value = savedTitle;
+            } else {
+                storyTitle.value = '';
+            }
+        }
+    } catch (error) {
+        const titleKey = 'storifyTitle_' + currentUser;
+        const savedTitle = localStorage.getItem(titleKey);
+        if (savedTitle) {
+            storyTitle.value = savedTitle;
+        } else {
+            storyTitle.value = '';
+        }
     }
     
     // Always analyze images to set theme based on photo content
@@ -1183,6 +1781,11 @@ function saveStoryTitle() {
     if (!currentUser) return;
     const key = 'storifyTitle_' + currentUser;
     localStorage.setItem(key, storyTitle.value);
+    
+    // Also save to Firestore
+    saveStoryTitleToFirestore(currentUser, storyTitle.value).catch(err => {
+        console.error('Error saving title to Firestore:', err);
+    });
 }
 
 // Render stories
@@ -1335,7 +1938,7 @@ function cancelNoteEditHandler() {
     exitNoteEditMode();
 }
 
-function saveNoteEditHandler() {
+async function saveNoteEditHandler() {
     if (currentStoryIndex === null) return;
     
     const newNote = detailNoteEdit.value.trim();
@@ -1346,11 +1949,27 @@ function saveNoteEditHandler() {
     
     const story = stories[currentStoryIndex];
     story.note = newNote;
-    story.aiNarration = generateAIStory(newNote); // Regenerate AI narration based on new note
+    
+    // Show loading state
+    saveNoteEdit.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+    saveNoteEdit.disabled = true;
+    aiNarration.textContent = 'Generating your meditation...';
+    
+    try {
+        // Regenerate AI narration based on new note using OpenAI
+        story.aiNarration = await generateOpenAINarration(newNote, story.image);
+    } catch (error) {
+        console.error('OpenAI failed, using fallback:', error);
+        story.aiNarration = generateAIStory(newNote);
+    }
     
     // Update display
     detailNote.textContent = newNote;
     aiNarration.textContent = story.aiNarration;
+    
+    // Restore button
+    saveNoteEdit.innerHTML = 'Save Note';
+    saveNoteEdit.disabled = false;
     
     // Save and update
     saveStories();
@@ -1374,14 +1993,31 @@ function saveNoteEditHandler() {
     }, 2000);
 }
 
-function regenerateAIStory() {
+async function regenerateAIStory() {
     if (currentStoryIndex !== null) {
         const story = stories[currentStoryIndex];
-        story.aiNarration = generateAIStory(story.note);
+        
+        // Show loading state
+        const icon = regenerateStory.querySelector('i');
+        const originalClass = icon.className;
+        icon.className = 'fas fa-spinner fa-spin';
+        regenerateStory.disabled = true;
+        aiNarration.textContent = 'Regenerating your meditation...';
+        
+        try {
+            // Try OpenAI first
+            story.aiNarration = await generateOpenAINarration(story.note, story.image);
+        } catch (error) {
+            console.error('OpenAI regeneration failed, using fallback:', error);
+            story.aiNarration = generateAIStory(story.note);
+        }
+        
         aiNarration.textContent = story.aiNarration;
         saveStories();
         
-        const icon = regenerateStory.querySelector('i');
+        // Restore button
+        icon.className = originalClass;
+        regenerateStory.disabled = false;
         icon.style.transform = 'rotate(360deg)';
         setTimeout(() => {
             icon.style.transform = 'rotate(0deg)';
@@ -1562,12 +2198,9 @@ function cleanNarrationText(text) {
 let narrationSegments = [];
 let currentChapterIndex = -1;
 
-// Play narration with ElevenLabs (FREE tier available!)
+// Play narration with immersive fullscreen meditation experience
 async function playStoryNarration() {
     stopAudio();
-    
-    // Build narration segments for display tracking
-    narrationSegments = [];
     
     // Get stories to narrate (from start chapter onwards)
     const startIndex = narrationStartChapter;
@@ -1578,99 +2211,75 @@ async function playStoryNarration() {
         return;
     }
     
-    // Opening - warm, intimate intro (adjusted if starting mid-story)
     const titleText = storyTitle.value || 'My Journey';
-    let openingText;
     
-    if (startIndex === 0) {
-        openingText = `${titleText}. <break time="1s"/> So... let me take you through this story. It's a good one, I promise. <break time="800ms"/>`;
-    } else {
-        openingText = `${titleText}. <break time="800ms"/> Picking up from chapter ${startIndex + 1}... <break time="600ms"/>`;
-    }
-    
-    narrationSegments.push({ 
-        type: 'intro', 
-        text: startIndex === 0 ? `📖 ${titleText}` : `📖 ${titleText} (from Ch. ${startIndex + 1})`, 
-        displayText: startIndex === 0 ? 'Beginning your story...' : `Continuing from Chapter ${startIndex + 1}...`,
-        charCount: openingText.replace(/<[^>]*>/g, '').length
-    });
-    
-    let narrationText = openingText;
-    let totalCharCount = openingText.replace(/<[^>]*>/g, '').length;
-    
-    // Ultra-natural conversational transitions - like a friend telling you a story
-    const naturalTransitions = [
-        '<break time="1.2s"/> And then... oh, this part. <break time="400ms"/>',
-        '<break time="1.2s"/> So after that— and this is where it gets good— <break time="400ms"/>',
-        '<break time="1.2s"/> Moving on... <break time="400ms"/>',
-        '<break time="1.2s"/> And here— okay, you have to hear this— <break time="400ms"/>',
-        '<break time="1.2s"/> Now this next part... it really gets me. <break time="400ms"/>',
-        '<break time="1.2s"/> Oh, and then... wait till you hear this. <break time="400ms"/>',
-        '<break time="1.2s"/> So next... and I love this part... <break time="400ms"/>'
-    ];
-    
-    storiesToNarrate.forEach((story, relativeIndex) => {
-        const actualIndex = startIndex + relativeIndex;
-        let chapterText = '';
-        
-        if (relativeIndex > 0) {
-            chapterText += naturalTransitions[relativeIndex % naturalTransitions.length];
-        }
-        
-        // Go straight to the narration - clean any leftover stage directions
-        const cleanedNarration = cleanNarrationText(story.aiNarration);
-        chapterText += `${cleanedNarration} <break time="800ms"/>`;
-        narrationText += chapterText;
-        
-        const cleanChapterText = chapterText.replace(/<[^>]*>/g, '');
-        totalCharCount += cleanChapterText.length;
-        
-        narrationSegments.push({ 
-            type: 'chapter', 
-            index: actualIndex,
-            text: `${actualIndex + 1}`,
-            displayText: story.aiNarration,
-            charCount: cleanChapterText.length,
-            startCharPosition: totalCharCount - cleanChapterText.length
-        });
-    });
-    
-    // Closing - smooth, natural ending
-    const closingText = '<break time="1.5s"/> And that is our story. <break time="800ms"/> Thank you for listening.';
-    narrationText += closingText;
-    totalCharCount += closingText.replace(/<[^>]*>/g, '').length;
-    
-    narrationSegments.push({ 
-        type: 'outro', 
-        text: '✨ The End', 
-        displayText: 'Thank you for listening.',
-        charCount: closingText.replace(/<[^>]*>/g, '').length,
-        startCharPosition: totalCharCount - closingText.replace(/<[^>]*>/g, '').length
-    });
-    
-    // Calculate percentage boundaries for each segment
-    let runningTotal = 0;
-    narrationSegments.forEach((seg, i) => {
-        seg.startPercent = runningTotal / totalCharCount;
-        runningTotal += seg.charCount;
-        seg.endPercent = runningTotal / totalCharCount;
-    });
-    
-    // Show first segment
-    updateNarrationDisplay(0);
-    
-    // If no API key, use browser voice
-    if (!elevenLabsApiKey) {
-        // Remove SSML tags for browser speech
-        const plainText = narrationText.replace(/<break[^>]*>/g, '... ');
-        useBrowserSpeech(plainText);
-        return;
-    }
-    
-    playNarration.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Loading...</span>';
+    // Show loading state
+    playNarration.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Creating your meditation...</span>';
     playNarration.classList.add('loading');
     
+    // Get meditation viewer elements (but don't show yet)
+    const meditationViewer = document.getElementById('meditationViewer');
+    const meditationImage = document.getElementById('meditationImage');
+    const meditationImageNext = document.getElementById('meditationImageNext');
+    const meditationText = document.getElementById('meditationText');
+    const meditationProgressBar = document.getElementById('meditationProgressBar');
+    const currentMomentNum = document.getElementById('currentMomentNum');
+    const totalMomentsNum = document.getElementById('totalMomentsNum');
+    
+    // Pre-load the first image but don't show viewer yet
+    meditationImage.src = storiesToNarrate[0].image;
+    meditationText.textContent = ''; // No text display
+    totalMomentsNum.textContent = storiesToNarrate.length;
+    currentMomentNum.textContent = '1';
+    
     try {
+        // Generate unified meditation script using OpenAI
+        console.log('Generating unified meditation script for', storiesToNarrate.length, 'moments...');
+        const segments = await generateUnifiedMeditationScript(storiesToNarrate, titleText);
+        
+        if (!segments || segments.length === 0) {
+            throw new Error('Failed to generate meditation script');
+        }
+        
+        meditationSegments = segments;
+        console.log('Generated', segments.length, 'meditation segments');
+        
+        // Build the full narration text for ElevenLabs
+        let fullNarrationText = `${titleText}. <break time="1.2s"/>`;
+        
+        segments.forEach((segment, index) => {
+            if (segment.type === 'moment') {
+                if (index > 0) {
+                    fullNarrationText += '<break time="2s"/>';
+                }
+                fullNarrationText += segment.text + ' <break time="1.5s"/>';
+            } else if (segment.type === 'closing') {
+                fullNarrationText += '<break time="2s"/>' + segment.text;
+            }
+        });
+        
+        // Calculate timing for each segment (rough estimate based on character count)
+        const totalChars = fullNarrationText.replace(/<[^>]*>/g, '').length;
+        let runningChars = titleText.length;
+        
+        segments.forEach((segment, index) => {
+            const segmentChars = segment.text.replace(/<[^>]*>/g, '').length;
+            segment.startPercent = runningChars / totalChars;
+            runningChars += segmentChars;
+            segment.endPercent = runningChars / totalChars;
+            segment.storyIndex = startIndex + segment.momentIndex;
+        });
+        
+        // Don't show text - keep it clean
+        meditationText.textContent = '';
+        meditationText.style.display = 'none';
+        
+        // Generate audio with ElevenLabs
+        if (!elevenLabsApiKey) {
+            playMeditationWithBrowserSpeech(fullNarrationText, segments, storiesToNarrate, startIndex);
+            return;
+        }
+        
         const response = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + ELEVENLABS_VOICE_ID, {
             method: 'POST',
             headers: {
@@ -1679,78 +2288,262 @@ async function playStoryNarration() {
                 'xi-api-key': elevenLabsApiKey
             },
             body: JSON.stringify({
-                text: narrationText,
+                text: fullNarrationText,
                 model_id: 'eleven_multilingual_v2',
                 voice_settings: {
-                    stability: 0.15,           // MINIMUM stability = maximum natural variation & emotion
-                    similarity_boost: 0.70,    // Lower = more unique, human-like delivery
-                    style: 0.95,               // MAXIMUM style = most expressive storytelling possible
-                    use_speaker_boost: true    // Enhanced presence and warmth
+                    stability: 0.20,
+                    similarity_boost: 0.65,
+                    style: 0.90,
+                    use_speaker_boost: true
                 }
             })
         });
         
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            console.error('ElevenLabs API response:', response.status, errorData);
-            throw new Error(errorData.detail?.message || 'API error: ' + response.status);
+            throw new Error(errorData.detail?.message || 'ElevenLabs API error: ' + response.status);
         }
         
         const audioBlob = await response.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
         
-        currentAudio = new Audio(audioUrl);
+        meditationAudio = new Audio(audioUrl);
+        meditationAudio.preload = 'auto';
         
-        // Wait for audio to be ready before playing
-        currentAudio.oncanplaythrough = () => {
-            currentAudio.play().catch(e => {
-                console.error('Play error:', e);
-                alert('Could not play audio. Try again.');
-            });
-            
-            // Start tracking chapters based on time
-            startChapterTracking();
-        };
+        // Wait for audio to be fully loaded before doing anything
+        await new Promise((resolve, reject) => {
+            meditationAudio.oncanplaythrough = resolve;
+            meditationAudio.onerror = (e) => reject(new Error('Audio load error'));
+            meditationAudio.load();
+        });
         
-        currentAudio.onerror = (e) => {
-            console.error('Audio error:', e);
-            playNarration.classList.remove('loading');
-            playNarration.innerHTML = '<i class="fas fa-play"></i><span>Play Narration</span>';
-            const plainText = narrationText.replace(/<break[^>]*>/g, '... ');
-            alert('Audio playback error. Using browser voice.');
-            useBrowserSpeech(plainText);
-        };
+        // Audio is ready - show viewer with a start button (for browser autoplay policy)
+        meditationViewer.classList.remove('hidden');
+        meditationImage.classList.add('zooming');
         
-        playNarration.innerHTML = '<i class="fas fa-pause"></i><span>Pause</span>';
+        // Show a "Tap to Begin" overlay that user must click (satisfies browser autoplay policy)
+        const startOverlay = document.createElement('div');
+        startOverlay.id = 'meditationStartOverlay';
+        startOverlay.innerHTML = `
+            <div class="meditation-start-prompt">
+                <i class="fas fa-play-circle"></i>
+                <p>Tap to Begin Your Meditation</p>
+            </div>
+        `;
+        startOverlay.style.cssText = `
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            cursor: pointer;
+        `;
+        startOverlay.querySelector('.meditation-start-prompt').style.cssText = `
+            text-align: center;
+            color: white;
+            font-family: 'Quicksand', sans-serif;
+        `;
+        startOverlay.querySelector('i').style.cssText = `
+            font-size: 80px;
+            margin-bottom: 20px;
+            display: block;
+            opacity: 0.9;
+        `;
+        startOverlay.querySelector('p').style.cssText = `
+            font-size: 22px;
+            font-weight: 500;
+        `;
+        
+        meditationViewer.appendChild(startOverlay);
+        
+        // Update button state
+        playNarration.innerHTML = '<i class="fas fa-stop"></i><span>Stop</span>';
         playNarration.classList.remove('loading');
-        isNarrationPaused = false;
+        playNarration.onclick = closeMeditationViewer;
         
-        currentAudio.onended = () => {
-            playNarration.innerHTML = '<i class="fas fa-play"></i><span>Play Again</span>';
-            playNarration.onclick = playStoryNarration;
-            URL.revokeObjectURL(audioUrl);
-            isNarrationPaused = false;
-            stopChapterTracking();
-            // Show completion message
-            narrationContent.innerHTML = `
-                <div style="text-align: center;">
-                    <p style="font-size: 16px; margin-bottom: 8px;">✨ <strong>Story Complete</strong> ✨</p>
-                    <p style="color: var(--text-light);">Thank you for listening to your journey.</p>
-                </div>
-            `;
+        // Wait for user to tap the overlay (satisfies autoplay policy)
+        startOverlay.onclick = async () => {
+            startOverlay.remove();
+            
+            try {
+                await meditationAudio.play();
+                // Start tracking for image transitions
+                startMeditationTracking(segments, storiesToNarrate, startIndex);
+            } catch (e) {
+                console.error('Play error:', e);
+                closeMeditationViewer();
+                alert('Could not play audio. Please try again.');
+            }
         };
         
-        playNarration.onclick = () => {
-            toggleAudioPause();
+        meditationAudio.onended = () => {
+            // Meditation complete - close after a moment
+            meditationProgressBar.style.width = '100%';
+            
+            setTimeout(() => {
+                closeMeditationViewer();
+            }, 2000);
         };
         
     } catch (error) {
-        console.error('ElevenLabs error:', error);
+        console.error('Meditation generation error:', error);
+        closeMeditationViewer();
         playNarration.classList.remove('loading');
         playNarration.innerHTML = '<i class="fas fa-play"></i><span>Play Narration</span>';
-        alert('ElevenLabs error: ' + error.message + '\n\nUsing browser voice instead.');
-        useBrowserSpeech(narrationText);
+        playNarration.onclick = playStoryNarration;
+        alert('Error creating meditation: ' + error.message);
     }
+}
+
+// Track meditation progress and transition images
+function startMeditationTracking(segments, storiesToNarrate, startIndex) {
+    const meditationImage = document.getElementById('meditationImage');
+    const meditationImageNext = document.getElementById('meditationImageNext');
+    const meditationText = document.getElementById('meditationText');
+    const meditationProgressBar = document.getElementById('meditationProgressBar');
+    const currentMomentNum = document.getElementById('currentMomentNum');
+    
+    currentMeditationSegment = 0;
+    
+    meditationTrackingInterval = setInterval(() => {
+        if (!meditationAudio) return;
+        
+        const progress = meditationAudio.currentTime / meditationAudio.duration;
+        meditationProgressBar.style.width = (progress * 100) + '%';
+        
+        // Find which segment we're in
+        for (let i = 0; i < segments.length; i++) {
+            const segment = segments[i];
+            if (progress >= segment.startPercent && progress < segment.endPercent) {
+                if (i !== currentMeditationSegment) {
+                    currentMeditationSegment = i;
+                    
+                    // Text is hidden - no update needed
+                    
+                    // Transition to new image if it's a moment segment
+                    if (segment.type === 'moment' && segment.momentIndex < storiesToNarrate.length) {
+                        const storyIdx = segment.momentIndex;
+                        const newImage = storiesToNarrate[storyIdx].image;
+                        
+                        currentMomentNum.textContent = storyIdx + 1;
+                        
+                        // Smooth crossfade transition
+                        meditationImageNext.src = newImage;
+                        meditationImageNext.classList.add('fade-in');
+                        meditationImage.classList.add('fade-out');
+                        meditationImage.classList.remove('zooming');
+                        
+                        setTimeout(() => {
+                            meditationImage.src = newImage;
+                            meditationImage.classList.remove('fade-out');
+                            meditationImageNext.classList.remove('fade-in');
+                            
+                            // Restart zoom effect
+                            setTimeout(() => meditationImage.classList.add('zooming'), 100);
+                        }, 1500);
+                    }
+                }
+                break;
+            }
+        }
+    }, 200);
+}
+
+// Play meditation with browser speech (fallback)
+function playMeditationWithBrowserSpeech(text, segments, storiesToNarrate, startIndex) {
+    if (!('speechSynthesis' in window)) {
+        closeMeditationViewer();
+        alert('Speech not supported in this browser.');
+        return;
+    }
+    
+    const meditationText = document.getElementById('meditationText');
+    const meditationProgressBar = document.getElementById('meditationProgressBar');
+    const meditationImage = document.getElementById('meditationImage');
+    const currentMomentNum = document.getElementById('currentMomentNum');
+    
+    window.speechSynthesis.cancel();
+    const plainText = text.replace(/<break[^>]*>/g, '... ');
+    const utterance = new SpeechSynthesisUtterance(plainText);
+    utterance.rate = 0.80;
+    utterance.pitch = 1;
+    
+    // Simplified tracking for browser speech
+    let segmentIndex = 0;
+    const segmentDuration = 8000; // Rough estimate per segment
+    
+    const trackingInterval = setInterval(() => {
+        segmentIndex++;
+        if (segmentIndex < segments.length) {
+            const segment = segments[segmentIndex];
+            meditationText.textContent = segment.text;
+            meditationProgressBar.style.width = ((segmentIndex + 1) / segments.length * 100) + '%';
+            
+            if (segment.type === 'moment' && segment.momentIndex < storiesToNarrate.length) {
+                meditationImage.src = storiesToNarrate[segment.momentIndex].image;
+                currentMomentNum.textContent = segment.momentIndex + 1;
+            }
+        }
+    }, segmentDuration);
+    
+    utterance.onend = () => {
+        clearInterval(trackingInterval);
+        meditationText.textContent = '✨ Thank you for this journey through your memories ✨';
+        meditationProgressBar.style.width = '100%';
+        
+        setTimeout(() => {
+            closeMeditationViewer();
+        }, 4000);
+    };
+    
+    window.speechSynthesis.speak(utterance);
+    
+    playNarration.innerHTML = '<i class="fas fa-stop"></i><span>Stop</span>';
+    playNarration.classList.remove('loading');
+    playNarration.onclick = closeMeditationViewer;
+}
+
+// Close meditation viewer
+function closeMeditationViewer() {
+    const meditationViewer = document.getElementById('meditationViewer');
+    const meditationImage = document.getElementById('meditationImage');
+    
+    // Stop audio
+    if (meditationAudio) {
+        meditationAudio.pause();
+        meditationAudio = null;
+    }
+    
+    // Stop browser speech
+    if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+    }
+    
+    // Clear tracking
+    if (meditationTrackingInterval) {
+        clearInterval(meditationTrackingInterval);
+        meditationTrackingInterval = null;
+    }
+    
+    // Reset classes
+    meditationImage.classList.remove('zooming', 'fade-out');
+    document.getElementById('meditationImageNext').classList.remove('fade-in');
+    
+    // Hide viewer
+    meditationViewer.classList.add('hidden');
+    
+    // Reset play button
+    playNarration.innerHTML = '<i class="fas fa-play"></i><span>Play Narration</span>';
+    playNarration.classList.remove('loading');
+    playNarration.onclick = playStoryNarration;
+    
+    // Reset progress bar in viewer
+    document.getElementById('meditationProgressBar').style.width = '0%';
 }
 
 // Browser speech fallback
@@ -1919,19 +2712,38 @@ function closeDraftsModalHandler() {
     draftsModal.classList.add('hidden');
 }
 
-// Load drafts from localStorage
-function loadDrafts() {
+// Load drafts from Firestore/localStorage
+async function loadDrafts() {
     if (!currentUser) {
         drafts = [];
         return;
     }
     
+    // Try to load from Firestore first
+    try {
+        const firestoreDrafts = await loadDraftsFromFirestore(currentUser);
+        if (firestoreDrafts && firestoreDrafts.length > 0) {
+            drafts = firestoreDrafts;
+            console.log('Loaded', drafts.length, 'drafts from Firestore');
+            return;
+        }
+    } catch (error) {
+        console.error('Error loading drafts from Firestore:', error);
+    }
+    
+    // Fallback to localStorage
     const key = 'storifyDrafts_' + currentUser;
     const savedDrafts = localStorage.getItem(key);
     
     if (savedDrafts) {
         try {
             drafts = JSON.parse(savedDrafts);
+            // Sync to Firestore if found local drafts
+            if (drafts.length > 0) {
+                saveDraftsToFirestore(currentUser, drafts).catch(err => {
+                    console.error('Error syncing drafts to Firestore:', err);
+                });
+            }
         } catch (e) {
             console.error('Error loading drafts:', e);
             drafts = [];
@@ -1941,12 +2753,20 @@ function loadDrafts() {
     }
 }
 
-// Save drafts to localStorage
+// Save drafts to Firestore/localStorage
 function saveDrafts() {
     if (!currentUser) return;
     const key = 'storifyDrafts_' + currentUser;
     try {
+        // Save to localStorage for offline support
         localStorage.setItem(key, JSON.stringify(drafts));
+        
+        // Save to Firestore (async, non-blocking)
+        saveDraftsToFirestore(currentUser, drafts).then(() => {
+            console.log('Drafts synced to Firestore');
+        }).catch(err => {
+            console.error('Error syncing drafts to Firestore:', err);
+        });
     } catch (e) {
         console.error('Error saving drafts:', e);
         if (e.name === 'QuotaExceededError') {
